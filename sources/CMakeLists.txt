@@ -50,10 +50,10 @@ qt_add_executable(AndroidDrive
 )
 
 # Add include/link directories
-target_include_directories(AndroidDrive PRIVATE "C:/Program Files/Dokan/Dokan Library-2.0.6/include")
+target_include_directories(AndroidDrive PRIVATE "C:/Program Files/Dokan/DokanLibrary-2.3.1/include")
 target_link_libraries(AndroidDrive PRIVATE Qt${QT_VERSION_MAJOR}::Widgets)
 target_link_libraries(AndroidDrive PRIVATE Qt${QT_VERSION_MAJOR}::Network)
-target_link_libraries(AndroidDrive PRIVATE "C:/Program Files/Dokan/Dokan Library-2.0.6/lib/dokan2.lib")
+target_link_libraries(AndroidDrive PRIVATE "C:/Program Files/Dokan/DokanLibrary-2.3.1/lib/dokan2.lib")
 
 # Compile executable
 set_target_properties(AndroidDrive PROPERTIES
@@ -77,7 +77,7 @@ add_custom_command(TARGET AndroidDrive
     COMMAND ${CMAKE_COMMAND} -E copy "C:/Windows/System32/msvcp140_2.dll" "${CMAKE_CURRENT_BINARY_DIR}/windeployqt"
     COMMAND ${CMAKE_COMMAND} -E copy "C:/Windows/System32/vcruntime140.dll" "${CMAKE_CURRENT_BINARY_DIR}/windeployqt"
     COMMAND ${CMAKE_COMMAND} -E copy "C:/Windows/System32/vcruntime140_1.dll" "${CMAKE_CURRENT_BINARY_DIR}/windeployqt"
-    COMMAND ${CMAKE_COMMAND} -E copy "C:/Program Files/Dokan/Dokan Library-2.0.6/dokan2.dll" "${CMAKE_CURRENT_BINARY_DIR}/windeployqt"
+    COMMAND ${CMAKE_COMMAND} -E copy "C:/Program Files/Dokan/DokanLibrary-2.3.1/dokan2.dll" "${CMAKE_CURRENT_BINARY_DIR}/windeployqt"
     COMMAND ${CMAKE_COMMAND} -E remove_directory "${CMAKE_CURRENT_BINARY_DIR}/windeployqt/translations"
     COMMAND ${CMAKE_COMMAND} -E remove "${CMAKE_CURRENT_BINARY_DIR}/windeployqt/vc_redist.x64.exe"
 )

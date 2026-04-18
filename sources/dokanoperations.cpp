@@ -72,7 +72,7 @@ void DOKAN_CALLBACK closeFile(LPCWSTR fileName, PDOKAN_FILE_INFO dokanFileInfo){
 
 void DOKAN_CALLBACK cleanup(LPCWSTR fileName, PDOKAN_FILE_INFO dokanFileInfo){
     DebugLogger::getInstance().log("Calling cleanup on file '{}'", QString::fromWCharArray(fileName));
-    if(dokanFileInfo->DeleteOnClose){
+    if(dokanFileInfo->DeletePending){
         deleteFile(fileName, dokanFileInfo);
     }
     else{

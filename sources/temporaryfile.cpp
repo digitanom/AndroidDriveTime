@@ -69,14 +69,16 @@ NTSTATUS TemporaryFile::read(LPVOID buffer, DWORD bufferLength, LPDWORD readLeng
         closeHandleWhenFinished = true;
     }
 
-    LARGE_INTEGER distanceToMove;
-    distanceToMove.QuadPart = offset;
-    if(!SetFilePointerEx(handle, distanceToMove, nullptr, FILE_BEGIN) || !ReadFile(handle, buffer, bufferLength, readLength, nullptr)){
-        status = DokanNtStatusFromWin32(GetLastError());
-        DebugLogger::getInstance().log("Reading file '{}' failed. Error code: {}", std::make_tuple(this->_localPath, status));
+    OVERLAPPED overlap;
+    ZeroMemory(&overlap, sizeof(OVERLAPPED));
+    overlap.Offset = offset & 0xFFFFFFFF;
+    overlap.OffsetHigh = (offset >> 32) & 0xFFFFFFFF;
+    if(ReadFile(handle, buffer, bufferLength, readLength, &overlap)){
+        DebugLogger::getInstance().log("Reading file '{}' succeeded", this->_localPath);
     }
     else{
-        DebugLogger::getInstance().log("Reading file '{}' succeeded", this->_localPath);
+        status = DokanNtStatusFromWin32(GetLastError());
+        DebugLogger::getInstance().log("Reading file '{}' failed. Error code: {}", std::make_tuple(this->_localPath, status));
     }
 
     if(closeHandleWhenFinished){
