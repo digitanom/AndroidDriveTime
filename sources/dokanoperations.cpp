@@ -144,14 +144,27 @@ NTSTATUS DOKAN_CALLBACK getFileInformation(LPCWSTR fileName, LPBY_HANDLE_FILE_IN
     FILETIME unknownTime;
     unknownTime.dwHighDateTime = unknownTime.dwLowDateTime = 0;
     bool creationTimeKnown;
-    const FILETIME creationTime = unixTimeToMicrosftTime(match.captured(3).toLongLong(&creationTimeKnown));
+ 
+    // !!! was:   const FILETIME creationTime = unixTimeToMicrosftTime(match.captured(3).toLongLong(&creationTimeKnown));
+    // new 2 strings:
+    const qlonglong creationUnixTime = match.captured(3).toLongLong(&creationTimeKnown);
+    const FILETIME creationTime = unixTimeToMicrosftTime(creationUnixTime);
+    
     bool lastWriteTimeKnown;
     const FILETIME lastWriteTime = unixTimeToMicrosftTime(match.captured(4).toLongLong(&lastWriteTimeKnown));
     bool lastAccessTimeKnown;
     const FILETIME lastAccessTime = unixTimeToMicrosftTime(match.captured(5).toLongLong(&lastAccessTimeKnown));
 
     handleFileInformation->dwFileAttributes = getFileAttributes(isDirectory, filePath.split("/").last());
-    handleFileInformation->ftCreationTime = creationTimeKnown ? creationTime : unknownTime;
+    
+    // !!! was:    handleFileInformation->ftCreationTime = creationTimeKnown ? creationTime : unknownTime;
+    // new 4 strings:
+    handleFileInformation->ftCreationTime =
+    (creationTimeKnown && creationUnixTime > 0)
+        ? creationTime
+        : (lastWriteTimeKnown ? lastWriteTime : unknownTime);
+
+    
     handleFileInformation->ftLastWriteTime = lastWriteTimeKnown ? lastWriteTime : unknownTime;
     handleFileInformation->ftLastAccessTime = lastAccessTimeKnown ? lastAccessTime : unknownTime;
     handleFileInformation->nFileSizeHigh = fileSize.HighPart;
@@ -197,7 +210,13 @@ NTSTATUS DOKAN_CALLBACK findFiles(LPCWSTR fileName, PFillFindData fillFindData, 
         FILETIME unknownTime;
         unknownTime.dwHighDateTime = unknownTime.dwLowDateTime = 0;
         bool creationTimeKnown;
-        const FILETIME creationTime = unixTimeToMicrosftTime(match.captured(3).toLongLong(&creationTimeKnown));
+        
+        // !!! was:     const FILETIME creationTime = unixTimeToMicrosftTime(match.captured(3).toLongLong(&creationTimeKnown));
+        // new 2 strings:
+        const qlonglong creationUnixTime = match.captured(3).toLongLong(&creationTimeKnown);
+        const FILETIME creationTime = unixTimeToMicrosftTime(creationUnixTime);
+
+        
         bool lastWriteTimeKnown;
         const FILETIME lastWriteTime = unixTimeToMicrosftTime(match.captured(4).toLongLong(&lastWriteTimeKnown));
         bool lastAccessTimeKnown;
@@ -206,7 +225,15 @@ NTSTATUS DOKAN_CALLBACK findFiles(LPCWSTR fileName, PFillFindData fillFindData, 
 
         WIN32_FIND_DATAW findData;
         findData.dwFileAttributes = getFileAttributes(isDirectory, subfileName);
-        findData.ftCreationTime = creationTimeKnown ? creationTime : unknownTime;
+        
+        // !!! was:       findData.ftCreationTime = creationTimeKnown ? creationTime : unknownTime;
+        // new 4 strings :
+        findData.ftCreationTime =
+            (creationTimeKnown && creationUnixTime > 0)
+                ? creationTime
+                : (lastWriteTimeKnown ? lastWriteTime : unknownTime);
+        
+        
         findData.ftLastWriteTime = lastWriteTimeKnown ? lastWriteTime : unknownTime;
         findData.ftLastAccessTime = lastAccessTimeKnown ? lastAccessTime : unknownTime;
         findData.nFileSizeHigh = fileSize.HighPart;
