@@ -1,0 +1,69 @@
+name: Build AndroidDriveTime
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.3'
+          arch: 'win64_msvc2022_64'
+          cache: true
+
+      - name: Install Dokan 2.3.1
+        shell: powershell
+        run: |
+          Invoke-WebRequest `
+            -Uri "https://github.com/dokan-dev/dokany/releases/download/v2.3.1.1000/DokanSetup.exe" `
+            -OutFile "$env:TEMP\DokanSetup.exe"
+
+          Start-Process `
+            -FilePath "$env:TEMP\DokanSetup.exe" `
+            -ArgumentList "/quiet" `
+            -Wait
+
+          Write-Host "Dokan contents:"
+          Get-ChildItem "C:\Program Files\Dokan" -Recurse | Select-Object FullName
+
+      - name: Configure
+        shell: powershell
+        run: |
+          cmake -S sources -B build `
+            -G "Visual Studio 17 2022" `
+            -A x64 `
+            -DCMAKE_PREFIX_PATH="$env:Qt6_DIR"
+
+      - name: Build
+        shell: powershell
+        run: |
+          cmake --build build --config Release
+
+      - name: Prepare portable package
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path artifact
+
+          Copy-Item `
+            "build\Release\AndroidDrive.exe" `
+            "artifact\AndroidDriveTime.exe"
+
+          if (Test-Path "build\windeployqt") {
+            Copy-Item "build\windeployqt\*" "artifact\" -Recurse -Force
+          }
+
+          Write-Host "Artifact contents:"
+          Get-ChildItem artifact -Recurse
+
+      - name: Upload portable build
+        uses: actions/upload-artifact@v4
+        with:
+          name: AndroidDriveTime-portable
+          path: artifact
