@@ -1,0 +1,133 @@
+name: Prepare Dokan Vendor
+
+on:
+  workflow_dispatch:
+
+jobs:
+  prepare:
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Prepare Dokan SDK
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $version = "v2.3.1.1000"
+          $work = "$env:RUNNER_TEMP\dokan"
+          $out = "$work\vendor"
+
+          New-Item -ItemType Directory -Force "$work\binary" | Out-Null
+          New-Item -ItemType Directory -Force "$out\include\dokan" | Out-Null
+          New-Item -ItemType Directory -Force "$out\lib" | Out-Null
+
+          Write-Host "Downloading exact Dokany $version headers..."
+
+          Invoke-WebRequest `
+            "https://raw.githubusercontent.com/dokan-dev/dokany/$version/dokan/dokan.h" `
+            -OutFile "$out\include\dokan\dokan.h"
+
+          Invoke-WebRequest `
+            "https://raw.githubusercontent.com/dokan-dev/dokany/$version/dokan/fileinfo.h" `
+            -OutFile "$out\include\dokan\fileinfo.h"
+
+          Invoke-WebRequest `
+            "https://raw.githubusercontent.com/dokan-dev/dokany/$version/sys/public.h" `
+            -OutFile "$out\include\dokan\public.h"
+
+          Write-Host "Downloading official Dokany binary package..."
+
+          Invoke-WebRequest `
+            "https://github.com/dokan-dev/dokany/releases/download/$version/dokan.zip" `
+            -OutFile "$work\dokan.zip"
+
+          Expand-Archive "$work\dokan.zip" "$work\binary" -Force
+
+          Write-Host "Searching for x64 dokan2.lib..."
+
+          $libs = Get-ChildItem "$work\binary" -Recurse -Filter "dokan2.lib"
+
+          $lib = $libs |
+            Where-Object { $_.FullName -match '[\\/]x64[\\/]' -and $_.FullName -match '[\\/]Release[\\/]' } |
+            Select-Object -First 1
+
+          if (-not $lib) {
+            $lib = $libs |
+              Where-Object { $_.FullName -match '[\\/]x64[\\/]' } |
+              Select-Object -First 1
+          }
+
+          if (-not $lib) {
+            Write-Host "All dokan2.lib candidates:"
+            $libs | Select-Object FullName
+            throw "x64 dokan2.lib not found"
+          }
+
+          Write-Host "Using:"
+          Write-Host $lib.FullName
+
+          Copy-Item $lib.FullName "$out\lib\dokan2.lib"
+
+          Write-Host "Searching for x64 dokan2.dll..."
+
+          $dlls = Get-ChildItem "$work\binary" -Recurse -Filter "dokan2.dll"
+
+          $dll = $dlls |
+            Where-Object { $_.FullName -match '[\\/]x64[\\/]' -and $_.FullName -match '[\\/]Release[\\/]' } |
+            Select-Object -First 1
+
+          if (-not $dll) {
+            $dll = $dlls |
+              Where-Object { $_.FullName -match '[\\/]x64[\\/]' } |
+              Select-Object -First 1
+          }
+
+          if (-not $dll) {
+            Write-Host "All dokan2.dll candidates:"
+            $dlls | Select-Object FullName
+            throw "x64 dokan2.dll not found"
+          }
+
+          Write-Host "Using:"
+          Write-Host $dll.FullName
+
+          Copy-Item $dll.FullName "$out\dokan2.dll"
+
+          Invoke-WebRequest `
+            "https://raw.githubusercontent.com/dokan-dev/dokany/$version/license.lgpl.txt" `
+            -OutFile "$out\LICENSE-DOKAN-LGPL.txt"
+
+          @"
+          Dokany SDK files vendored for AndroidDriveTime
+
+          Version: 2.3.1.1000
+          Tag: v2.3.1.1000
+
+          Included:
+          - include/dokan/dokan.h
+          - include/dokan/fileinfo.h
+          - include/dokan/public.h
+          - lib/dokan2.lib (x64)
+          - dokan2.dll (x64)
+
+          Original project:
+          https://github.com/dokan-dev/dokany
+          "@ | Set-Content "$out\SOURCE.txt"
+
+          Write-Host "Vendor contents:"
+          Get-ChildItem "$out" -Recurse |
+            Select-Object FullName, Length
+
+          Compress-Archive `
+            -Path "$out\*" `
+            -DestinationPath "$env:RUNNER_TEMP\dokan-sdk-2.3.1.1000-win64.zip" `
+            -Force
+
+      - name: Upload Dokan vendor archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: dokan-sdk-2.3.1.1000-win64
+          path: ${{ runner.temp }}/dokan-sdk-2.3.1.1000-win64.zip
