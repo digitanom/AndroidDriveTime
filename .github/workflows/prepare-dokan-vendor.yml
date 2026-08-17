@@ -3,6 +3,9 @@ name: Prepare Dokan Vendor
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   prepare:
     runs-on: windows-2022
@@ -19,12 +22,14 @@ jobs:
           $version = "v2.3.1.1000"
           $work = "$env:RUNNER_TEMP\dokan"
           $out = "$work\vendor"
+          $repoThirdParty = "$env:GITHUB_WORKSPACE\third_party"
 
           New-Item -ItemType Directory -Force "$work\binary" | Out-Null
           New-Item -ItemType Directory -Force "$out\include\dokan" | Out-Null
           New-Item -ItemType Directory -Force "$out\lib" | Out-Null
+          New-Item -ItemType Directory -Force "$repoThirdParty" | Out-Null
 
-          Write-Host "Downloading exact Dokany $version headers..."
+          Write-Host "Downloading Dokany headers..."
 
           Invoke-WebRequest `
             "https://raw.githubusercontent.com/dokan-dev/dokany/$version/dokan/dokan.h" `
@@ -38,63 +43,72 @@ jobs:
             "https://raw.githubusercontent.com/dokan-dev/dokany/$version/sys/public.h" `
             -OutFile "$out\include\dokan\public.h"
 
-          Write-Host "Downloading official Dokany binary package..."
+          Write-Host "Downloading Dokany binary package..."
 
           Invoke-WebRequest `
             "https://github.com/dokan-dev/dokany/releases/download/$version/dokan.zip" `
             -OutFile "$work\dokan.zip"
 
-          Expand-Archive "$work\dokan.zip" "$work\binary" -Force
+          Expand-Archive `
+            "$work\dokan.zip" `
+            "$work\binary" `
+            -Force
 
           Write-Host "Searching for x64 dokan2.lib..."
 
-          $libs = Get-ChildItem "$work\binary" -Recurse -Filter "dokan2.lib"
+          $libs = Get-ChildItem `
+            "$work\binary" `
+            -Recurse `
+            -Filter "dokan2.lib"
 
           $lib = $libs |
-            Where-Object { $_.FullName -match '[\\/]x64[\\/]' -and $_.FullName -match '[\\/]Release[\\/]' } |
+            Where-Object {
+              $_.FullName -match '[\\/]x64[\\/]'
+            } |
             Select-Object -First 1
 
           if (-not $lib) {
-            $lib = $libs |
-              Where-Object { $_.FullName -match '[\\/]x64[\\/]' } |
-              Select-Object -First 1
-          }
-
-          if (-not $lib) {
-            Write-Host "All dokan2.lib candidates:"
+            Write-Host "Available dokan2.lib files:"
             $libs | Select-Object FullName
             throw "x64 dokan2.lib not found"
           }
 
-          Write-Host "Using:"
+          Write-Host "Using library:"
           Write-Host $lib.FullName
 
-          Copy-Item $lib.FullName "$out\lib\dokan2.lib"
+          Copy-Item `
+            $lib.FullName `
+            "$out\lib\dokan2.lib" `
+            -Force
 
           Write-Host "Searching for x64 dokan2.dll..."
 
-          $dlls = Get-ChildItem "$work\binary" -Recurse -Filter "dokan2.dll"
+          $dlls = Get-ChildItem `
+            "$work\binary" `
+            -Recurse `
+            -Filter "dokan2.dll"
 
           $dll = $dlls |
-            Where-Object { $_.FullName -match '[\\/]x64[\\/]' -and $_.FullName -match '[\\/]Release[\\/]' } |
+            Where-Object {
+              $_.FullName -match '[\\/]x64[\\/]'
+            } |
             Select-Object -First 1
 
           if (-not $dll) {
-            $dll = $dlls |
-              Where-Object { $_.FullName -match '[\\/]x64[\\/]' } |
-              Select-Object -First 1
-          }
-
-          if (-not $dll) {
-            Write-Host "All dokan2.dll candidates:"
+            Write-Host "Available dokan2.dll files:"
             $dlls | Select-Object FullName
             throw "x64 dokan2.dll not found"
           }
 
-          Write-Host "Using:"
+          Write-Host "Using DLL:"
           Write-Host $dll.FullName
 
-          Copy-Item $dll.FullName "$out\dokan2.dll"
+          Copy-Item `
+            $dll.FullName `
+            "$out\dokan2.dll" `
+            -Force
+
+          Write-Host "Downloading license..."
 
           Invoke-WebRequest `
             "https://raw.githubusercontent.com/dokan-dev/dokany/$version/license.lgpl.txt" `
@@ -110,8 +124,8 @@ jobs:
           - include/dokan/dokan.h
           - include/dokan/fileinfo.h
           - include/dokan/public.h
-          - lib/dokan2.lib (x64)
-          - dokan2.dll (x64)
+          - lib/dokan2.lib
+          - dokan2.dll
 
           Original project:
           https://github.com/dokan-dev/dokany
@@ -121,13 +135,35 @@ jobs:
           Get-ChildItem "$out" -Recurse |
             Select-Object FullName, Length
 
+          $archive = "$repoThirdParty\dokan-sdk-2.3.1.1000-win64.zip"
+
+          if (Test-Path $archive) {
+            Remove-Item $archive -Force
+          }
+
           Compress-Archive `
             -Path "$out\*" `
-            -DestinationPath "$env:RUNNER_TEMP\dokan-sdk-2.3.1.1000-win64.zip" `
+            -DestinationPath $archive `
             -Force
 
-      - name: Upload Dokan vendor archive
-        uses: actions/upload-artifact@v4
-        with:
-          name: dokan-sdk-2.3.1.1000-win64
-          path: ${{ runner.temp }}/dokan-sdk-2.3.1.1000-win64.zip
+          Write-Host "Created:"
+          Get-Item $archive |
+            Select-Object FullName, Length
+
+      - name: Commit Dokan vendor archive
+        shell: powershell
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add third_party/dokan-sdk-2.3.1.1000-win64.zip
+
+          git diff --cached --quiet
+
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Vendor archive already exists and is unchanged."
+            exit 0
+          }
+
+          git commit -m "Vendor Dokan 2.3.1 SDK"
+          git push
