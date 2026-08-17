@@ -5,11 +5,10 @@ on:
 
 jobs:
   build:
-    name: Build
     runs-on: windows-2022
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v5
 
       - name: Install Qt
@@ -19,122 +18,47 @@ jobs:
           arch: 'win64_msvc2022_64'
           cache: true
 
-      - name: Prepare Dokan 2.3.1 SDK
+      - name: Prepare vendored Dokan SDK
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
 
-          $version = "v2.3.1.1000"
-          $work = "$env:RUNNER_TEMP\dokan-sdk"
+          $archive = "$env:GITHUB_WORKSPACE\third_party\dokan-sdk-2.3.1.1000-win64.zip"
           $dst = "C:\Program Files\Dokan\DokanLibrary-2.3.1"
 
-          New-Item -ItemType Directory -Force -Path "$work\src" | Out-Null
-          New-Item -ItemType Directory -Force -Path "$work\bin" | Out-Null
-          New-Item -ItemType Directory -Force -Path "$dst\include\dokan" | Out-Null
-          New-Item -ItemType Directory -Force -Path "$dst\lib" | Out-Null
+          if (-not (Test-Path $archive)) {
+            throw "Vendored Dokan archive not found: $archive"
+          }
 
-          Write-Host "Downloading Dokany source..."
+          Write-Host "Using vendored Dokan archive:"
+          Get-Item $archive | Select-Object FullName, Length
 
-          Invoke-WebRequest `
-            -Uri "https://github.com/dokan-dev/dokany/archive/refs/tags/$version.zip" `
-            -OutFile "$work\dokan-source.zip"
-
-          Write-Host "Downloading Dokany binary package..."
-
-          Invoke-WebRequest `
-            -Uri "https://github.com/dokan-dev/dokany/releases/download/$version/dokan.zip" `
-            -OutFile "$work\dokan-bin.zip"
-
-          Write-Host "Extracting Dokany..."
+          New-Item -ItemType Directory -Force $dst | Out-Null
 
           Expand-Archive `
-            -Path "$work\dokan-source.zip" `
-            -DestinationPath "$work\src" `
+            -Path $archive `
+            -DestinationPath $dst `
             -Force
 
-          Expand-Archive `
-            -Path "$work\dokan-bin.zip" `
-            -DestinationPath "$work\bin" `
-            -Force
+          Write-Host "Dokan SDK contents:"
+          Get-ChildItem $dst -Recurse |
+            Select-Object FullName, Length
 
-          Write-Host "Searching for Dokan headers..."
+          $required = @(
+            "$dst\include\dokan\dokan.h",
+            "$dst\include\dokan\fileinfo.h",
+            "$dst\include\dokan\public.h",
+            "$dst\lib\dokan2.lib",
+            "$dst\dokan2.dll"
+          )
 
-          $dokanHeader = Get-ChildItem `
-            -Path "$work\src" `
-            -Recurse `
-            -Filter "dokan.h" |
-            Select-Object -First 1
-
-          if (-not $dokanHeader) {
-            throw "dokan.h not found in Dokany source"
+          foreach ($file in $required) {
+            if (-not (Test-Path $file)) {
+              throw "Required Dokan file missing: $file"
+            }
           }
 
-          Write-Host "dokan.h found at:"
-          Write-Host $dokanHeader.FullName
-
-          $headerDirectory = $dokanHeader.Directory.FullName
-
-          Copy-Item `
-            -Path "$headerDirectory\*.h" `
-            -Destination "$dst\include\dokan" `
-            -Force
-
-          Write-Host "Searching for dokan2.lib..."
-
-          $dokanLib = Get-ChildItem `
-            -Path "$work\bin" `
-            -Recurse `
-            -Filter "dokan2.lib" |
-            Where-Object {
-              $_.FullName -match '[\\/]x64[\\/]'
-            } |
-            Select-Object -First 1
-
-          if (-not $dokanLib) {
-            Write-Host "Available dokan2.lib files:"
-            Get-ChildItem `
-              -Path "$work\bin" `
-              -Recurse `
-              -Filter "dokan2.lib" |
-              Select-Object FullName
-
-            throw "x64 dokan2.lib not found"
-          }
-
-          Write-Host "Using library:"
-          Write-Host $dokanLib.FullName
-
-          Copy-Item `
-            -Path $dokanLib.FullName `
-            -Destination "$dst\lib\dokan2.lib" `
-            -Force
-
-          Write-Host "Searching for dokan2.dll..."
-
-          $dokanDll = Get-ChildItem `
-            -Path "$work\bin" `
-            -Recurse `
-            -Filter "dokan2.dll" |
-            Where-Object {
-              $_.FullName -match '[\\/]x64[\\/]'
-            } |
-            Select-Object -First 1
-
-          if ($dokanDll) {
-            Write-Host "Using DLL:"
-            Write-Host $dokanDll.FullName
-
-            Copy-Item `
-              -Path $dokanDll.FullName `
-              -Destination "$dst\dokan2.dll" `
-              -Force
-          }
-
-          Write-Host "Prepared Dokan SDK:"
-          Get-ChildItem `
-            -Path "$dst" `
-            -Recurse |
-            Select-Object FullName
+          Write-Host "Vendored Dokan SDK validated successfully."
 
       - name: Configure
         shell: powershell
@@ -144,9 +68,9 @@ jobs:
             -B build `
             -G "Visual Studio 17 2022" `
             -A x64 `
-            -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR"
+            -DCMAKE_PREFIX_PATH="$env:Qt6_DIR"
 
-      - name: Build AndroidDriveTime
+      - name: Build
         shell: powershell
         run: |
           cmake `
@@ -158,38 +82,37 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
 
+          $artifact = "$env:GITHUB_WORKSPACE\artifact"
+
           New-Item `
             -ItemType Directory `
             -Force `
-            -Path artifact |
+            -Path $artifact |
             Out-Null
 
-          Copy-Item `
-            -Path "build\Release\AndroidDrive.exe" `
-            -Destination "artifact\AndroidDriveTime.exe" `
-            -Force
+          $exe = "$env:GITHUB_WORKSPACE\build\Release\AndroidDrive.exe"
 
-          if (Test-Path "build\windeployqt") {
+          if (-not (Test-Path $exe)) {
+            throw "AndroidDrive.exe not found: $exe"
+          }
+
+          Copy-Item `
+            $exe `
+            "$artifact\AndroidDriveTime.exe"
+
+          $deploy = "$env:GITHUB_WORKSPACE\build\windeployqt"
+
+          if (Test-Path $deploy) {
             Copy-Item `
-              -Path "build\windeployqt\*" `
-              -Destination "artifact" `
+              "$deploy\*" `
+              "$artifact\" `
               -Recurse `
               -Force
           }
 
-          if (Test-Path "C:\Program Files\Dokan\DokanLibrary-2.3.1\dokan2.dll") {
-            Copy-Item `
-              -Path "C:\Program Files\Dokan\DokanLibrary-2.3.1\dokan2.dll" `
-              -Destination "artifact\dokan2.dll" `
-              -Force
-          }
-
-          Write-Host "Artifact contents:"
-
-          Get-ChildItem `
-            -Path artifact `
-            -Recurse |
-            Select-Object FullName
+          Write-Host "Portable package contents:"
+          Get-ChildItem $artifact -Recurse |
+            Select-Object FullName, Length
 
       - name: Upload portable build
         uses: actions/upload-artifact@v4
