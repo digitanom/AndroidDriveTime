@@ -18,39 +18,86 @@ jobs:
           arch: 'win64_msvc2022_64'
           cache: true
 
-      - name: Install Dokan 2.3.1
+        - name: Prepare Dokan 2.3.1 SDK
         shell: powershell
         run: |
-          choco install dokany2 --version=2.3.1.1000 -y
+          $ErrorActionPreference = "Stop"
 
-          $root = "C:\Program Files\Dokan"
-          $dst = "$root\DokanLibrary-2.3.1"
+          $version = "v2.3.1.1000"
+          $work = "$env:RUNNER_TEMP\dokan-sdk"
+          $dst = "C:\Program Files\Dokan\DokanLibrary-2.3.1"
 
+          New-Item -ItemType Directory -Force "$work\src" | Out-Null
+          New-Item -ItemType Directory -Force "$work\bin" | Out-Null
           New-Item -ItemType Directory -Force "$dst\include\dokan" | Out-Null
           New-Item -ItemType Directory -Force "$dst\lib" | Out-Null
 
-          $dokanH = Get-ChildItem $root -Recurse -Filter dokan.h | Select-Object -First 1
-          $fileinfoH = Get-ChildItem $root -Recurse -Filter fileinfo.h | Select-Object -First 1
-          $publicH = Get-ChildItem $root -Recurse -Filter public.h | Select-Object -First 1
-          $dokanLib = Get-ChildItem $root -Recurse -Filter dokan2.lib | Select-Object -First 1
-          $dokanDll = Get-ChildItem $root -Recurse -Filter dokan2.dll | Select-Object -First 1
+          Write-Host "Downloading Dokany source..."
+          Invoke-WebRequest `
+            -Uri "https://github.com/dokan-dev/dokany/archive/refs/tags/$version.zip" `
+            -OutFile "$work\dokan-source.zip"
 
-          if (-not $dokanH) { throw "dokan.h not found" }
-          if (-not $fileinfoH) { throw "fileinfo.h not found" }
-          if (-not $publicH) { throw "public.h not found" }
-          if (-not $dokanLib) { throw "dokan2.lib not found" }
+          Write-Host "Downloading Dokany binary package..."
+          Invoke-WebRequest `
+            -Uri "https://github.com/dokan-dev/dokany/releases/download/$version/dokan.zip" `
+            -OutFile "$work\dokan-bin.zip"
 
-          Copy-Item $dokanH.FullName "$dst\include\dokan\dokan.h"
-          Copy-Item $fileinfoH.FullName "$dst\include\dokan\fileinfo.h"
-          Copy-Item $publicH.FullName "$dst\include\dokan\public.h"
-          Copy-Item $dokanLib.FullName "$dst\lib\dokan2.lib"
+          Expand-Archive "$work\dokan-source.zip" "$work\src" -Force
+          Expand-Archive "$work\dokan-bin.zip" "$work\bin" -Force
 
-          if ($dokanDll) {
-            Copy-Item $dokanDll.FullName "$dst\dokan2.dll"
+          # Headers
+          $dokanHeader = Get-ChildItem "$work\src" -Recurse -Filter "dokan.h" |
+            Where-Object { $_.Directory.Name -eq "dokan" } |
+            Select-Object -First 1
+
+          if (-not $dokanHeader) {
+            throw "dokan.h not found in Dokany source"
           }
 
+          Write-Host "Headers found at:"
+          Write-Host $dokanHeader.Directory.FullName
+
+          Copy-Item `
+            -Path (Join-Path $dokanHeader.Directory.FullName "*.h") `
+            -Destination "$dst\include\dokan" `
+            -Force
+
+          # x64 import library
+          $dokanLib = Get-ChildItem "$work\bin" -Recurse -Filter "dokan2.lib" |
+            Where-Object {
+              $_.FullName -match '[\\/]x64[\\/]' -and
+              $_.FullName -match '[\\/]Release[\\/]'
+            } |
+            Select-Object -First 1
+
+          if (-not $dokanLib) {
+            Write-Host "Available dokan2.lib files:"
+            Get-ChildItem "$work\bin" -Recurse -Filter "dokan2.lib" |
+              Select-Object FullName
+            throw "x64 Release dokan2.lib not found"
+          }
+
+          Copy-Item $dokanLib.FullName "$dst\lib\dokan2.lib" -Force
+
+          # x64 DLL
+          $dokanDll = Get-ChildItem "$work\bin" -Recurse -Filter "dokan2.dll" |
+            Where-Object {
+              $_.FullName -match '[\\/]x64[\\/]' -and
+              $_.FullName -match '[\\/]Release[\\/]'
+            } |
+            Select-Object -First 1
+
+          if (-not $dokanDll) {
+            Write-Host "Available dokan2.dll files:"
+            Get-ChildItem "$work\bin" -Recurse -Filter "dokan2.dll" |
+              Select-Object FullName
+            throw "x64 Release dokan2.dll not found"
+          }
+
+          Copy-Item $dokanDll.FullName "$dst\dokan2.dll" -Force
+
           Write-Host "Prepared Dokan SDK:"
-          Get-ChildItem "$dst" -Recurse
+          Get-ChildItem "$dst" -Recurse | Select-Object FullName
 
       - name: Configure
         shell: powershell
