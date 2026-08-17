@@ -21,17 +21,36 @@ jobs:
       - name: Install Dokan 2.3.1
         shell: powershell
         run: |
-          Invoke-WebRequest `
-            -Uri "https://github.com/dokan-dev/dokany/releases/download/v2.3.1.1000/DokanSetup.exe" `
-            -OutFile "$env:TEMP\DokanSetup.exe"
+          choco install dokany2 --version=2.3.1.1000 -y
 
-          Start-Process `
-            -FilePath "$env:TEMP\DokanSetup.exe" `
-            -ArgumentList "/quiet" `
-            -Wait
+          $root = "C:\Program Files\Dokan"
+          $dst = "$root\DokanLibrary-2.3.1"
 
-          Write-Host "Dokan contents:"
-          Get-ChildItem "C:\Program Files\Dokan" -Recurse | Select-Object FullName
+          New-Item -ItemType Directory -Force "$dst\include\dokan" | Out-Null
+          New-Item -ItemType Directory -Force "$dst\lib" | Out-Null
+
+          $dokanH = Get-ChildItem $root -Recurse -Filter dokan.h | Select-Object -First 1
+          $fileinfoH = Get-ChildItem $root -Recurse -Filter fileinfo.h | Select-Object -First 1
+          $publicH = Get-ChildItem $root -Recurse -Filter public.h | Select-Object -First 1
+          $dokanLib = Get-ChildItem $root -Recurse -Filter dokan2.lib | Select-Object -First 1
+          $dokanDll = Get-ChildItem $root -Recurse -Filter dokan2.dll | Select-Object -First 1
+
+          if (-not $dokanH) { throw "dokan.h not found" }
+          if (-not $fileinfoH) { throw "fileinfo.h not found" }
+          if (-not $publicH) { throw "public.h not found" }
+          if (-not $dokanLib) { throw "dokan2.lib not found" }
+
+          Copy-Item $dokanH.FullName "$dst\include\dokan\dokan.h"
+          Copy-Item $fileinfoH.FullName "$dst\include\dokan\fileinfo.h"
+          Copy-Item $publicH.FullName "$dst\include\dokan\public.h"
+          Copy-Item $dokanLib.FullName "$dst\lib\dokan2.lib"
+
+          if ($dokanDll) {
+            Copy-Item $dokanDll.FullName "$dst\dokan2.dll"
+          }
+
+          Write-Host "Prepared Dokan SDK:"
+          Get-ChildItem "$dst" -Recurse
 
       - name: Configure
         shell: powershell
