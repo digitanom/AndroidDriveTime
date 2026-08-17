@@ -18,7 +18,7 @@ jobs:
           arch: 'win64_msvc2022_64'
           cache: true
 
-        - name: Prepare Dokan 2.3.1 SDK
+     - name: Prepare Dokan 2.3.1 SDK
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
