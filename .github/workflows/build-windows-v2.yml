@@ -51,26 +51,57 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
-          $archive = "$env:GITHUB_WORKSPACE\third_party\dokany-source-v2.3.1.1000.zip"
+
+          $thirdParty = "$env:GITHUB_WORKSPACE\third_party"
           $dst = "$env:RUNNER_TEMP\dokany-src"
 
-          if (-not (Test-Path $archive)) { throw "Missing vendored Dokany source: $archive" }
+          Write-Host "Contents of third_party:"
+          Get-ChildItem $thirdParty |
+            Select-Object Name, Length
+
+          $archive = Get-ChildItem `
+            $thirdParty `
+            -Filter "dokany-source*.zip" |
+            Select-Object -First 1
+
+          if (-not $archive) {
+            throw "No dokany-source*.zip found in third_party"
+          }
+
+          Write-Host "Using Dokany source archive:"
+          Write-Host $archive.FullName
 
           New-Item -ItemType Directory -Force $dst | Out-Null
-          Expand-Archive -Path $archive -DestinationPath $dst -Force
 
-          $project = Get-ChildItem $dst -Recurse -Filter "dokan.vcxproj" |
+          Expand-Archive `
+            -Path $archive.FullName `
+            -DestinationPath $dst `
+            -Force
+
+          $project = Get-ChildItem `
+            $dst `
+            -Recurse `
+            -Filter "dokan.vcxproj" |
             Where-Object { $_.Directory.Name -eq "dokan" } |
             Select-Object -First 1
 
-          if (-not $project) { throw "dokan.vcxproj not found." }
+          if (-not $project) {
+            throw "dokan.vcxproj not found in Dokany source archive."
+          }
 
           $root = $project.Directory.Parent.FullName
-          "DOKAN_PROJECT=$($project.FullName)" | Out-File $env:GITHUB_ENV -Append
-          "DOKAN_ROOT=$root" | Out-File $env:GITHUB_ENV -Append
 
-          Write-Host "Dokany root: $root"
-          Write-Host "Dokan project: $($project.FullName)"
+          "DOKAN_PROJECT=$($project.FullName)" |
+            Out-File $env:GITHUB_ENV -Append
+
+          "DOKAN_ROOT=$root" |
+            Out-File $env:GITHUB_ENV -Append
+
+          Write-Host "Dokany root:"
+          Write-Host $root
+
+          Write-Host "Dokan project:"
+          Write-Host $project.FullName
 
       - name: Patch Dokany ChangeTime transport
         shell: powershell
