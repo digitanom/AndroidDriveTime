@@ -91,6 +91,11 @@ public:
      */
     void setHideDotFiles(bool hideDotFiles);
 
+
+    bool preserveChangeTime() const;
+    void setPreserveChangeTime(bool preserveChangeTime);
+
+
     /**
      * Gets the language that the tray icon settings windows should be displayed in.
      *
