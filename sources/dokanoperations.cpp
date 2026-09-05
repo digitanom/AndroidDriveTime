@@ -119,7 +119,7 @@ NTSTATUS DOKAN_CALLBACK getFileInformation(LPCWSTR fileName, LPBY_HANDLE_FILE_IN
     DebugLogger::getInstance().log("Calling getFileInformation on drive '{}', file '{}'", std::make_tuple(drive, filePath));
 
     bool ok;
-    const QString fileInfo = drive->device()->runAdbCommand(QString("stat -c \"%F %s %W %Y %X\" %1").arg(escapeSpecialCharactersForBash(filePath)), &ok);    //All devices don't support stat --format, so we have to use stat -c
+    const QString fileInfo = drive->device()->runAdbCommand(QString("stat -c \"%F %s %W %Y %X %Z\" %1").arg(escapeSpecialCharactersForBash(filePath)), &ok);    //All devices don't support stat --format, so we have to use stat -c
     if(!ok){
         TemporaryFile *temporaryFile = reinterpret_cast<TemporaryFile*>(dokanFileInfo->Context);
         if(temporaryFile != nullptr){
@@ -131,7 +131,7 @@ NTSTATUS DOKAN_CALLBACK getFileInformation(LPCWSTR fileName, LPBY_HANDLE_FILE_IN
     }
 
     DebugLogger::getInstance().log("Successfully fetched file info over ADB. Raw stat output: {}", fileInfo);
-    static const QRegularExpression fileInfoRegex("^([A-Za-z\\s]+) ([0-9]+) ([0-9?]+) ([0-9?]+) ([0-9?]+)$");
+    static const QRegularExpression fileInfoRegex("^([A-Za-z\\s]+) ([0-9]+) ([0-9?]+) ([0-9?]+) ([0-9?]+) ([0-9?]+)$");
     const QRegularExpressionMatch match = fileInfoRegex.match(fileInfo);
     if(!match.hasMatch()){
         DebugLogger::getInstance().log("Stat output doesn't match regex");
@@ -155,6 +155,24 @@ NTSTATUS DOKAN_CALLBACK getFileInformation(LPCWSTR fileName, LPBY_HANDLE_FILE_IN
     bool lastAccessTimeKnown;
     const FILETIME lastAccessTime = unixTimeToMicrosftTime(match.captured(5).toLongLong(&lastAccessTimeKnown));
 
+
+
+    /* NEW ============== */
+    bool changeTimeKnown;
+    const FILETIME changeTime =
+        unixTimeToMicrosftTime(match.captured(6).toLongLong(&changeTimeKnown));
+
+    const bool preserveChangeTime = Settings().preserveChangeTime();
+
+    const FILETIME effectiveChangeTime =
+        preserveChangeTime && changeTimeKnown
+            ? changeTime
+            : (lastWriteTimeKnown ? lastWriteTime : unknownTime);
+
+    *handleFileInformation = BY_HANDLE_FILE_INFORMATION{};
+
+    /* NEW END ============== */
+    
     handleFileInformation->dwFileAttributes = getFileAttributes(isDirectory, filePath.split("/").last());
     
     // !!! was:    handleFileInformation->ftCreationTime = creationTimeKnown ? creationTime : unknownTime;
@@ -169,7 +187,12 @@ NTSTATUS DOKAN_CALLBACK getFileInformation(LPCWSTR fileName, LPBY_HANDLE_FILE_IN
     handleFileInformation->ftLastAccessTime = lastAccessTimeKnown ? lastAccessTime : unknownTime;
     handleFileInformation->nFileSizeHigh = fileSize.HighPart;
     handleFileInformation->nFileSizeLow = fileSize.LowPart;
-
+ 
+    /* NEW ============== */
+    handleFileInformation->nFileIndexLow = effectiveChangeTime.dwLowDateTime;
+    handleFileInformation->nFileIndexHigh = effectiveChangeTime.dwHighDateTime;
+    /* NEW END ============== */
+    
     DebugLogger::getInstance().log("isDirectory: {}, dwFileAttributes: {}, fileSize: {}", std::make_tuple(isDirectory, handleFileInformation->dwFileAttributes, fileSize.QuadPart));
 
     return STATUS_SUCCESS;
@@ -190,13 +213,14 @@ NTSTATUS DOKAN_CALLBACK findFiles(LPCWSTR fileName, PFillFindData fillFindData, 
      */
     bool ok;
     static const QRegularExpression newlineRegex("[\r\n]+");
-    const QStringList output = drive->device()->runAdbCommand(QString("stat -c \"%F %s %W %Y %X %n\" %1/* %1/.* || test -d %1").arg(escapeSpecialCharactersForBash(filePath)), &ok).split(newlineRegex);    //The || test -d is necessary so that it doesn't return an error for empty directories (otherwise it will give an error like "Can't find /sdcard/emptydirectory/*" since there are no files that match that pattern), but so that it still returns an error if the directory doesn't exist at all.
+    const QStringList output = drive->device()->runAdbCommand(QString("stat -c \"%F %s %W %Y %X %Z %n\" %1/* %1/.* || test -d %1").arg(escapeSpecialCharactersForBash(filePath)), &ok).split(newlineRegex);    //The || test -d is necessary so that it doesn't return an error for empty directories (otherwise it will give an error like "Can't find /sdcard/emptydirectory/*" since there are no files that match that pattern), but so that it still returns an error if the directory doesn't exist at all.
     if(!ok){
         DebugLogger::getInstance().log("findFiles: stat failed, returning STATUS_UNSUCCESSFUL");
         return STATUS_UNSUCCESSFUL;
     }
 
-    static const QRegularExpression fileInfoRegex("^([A-Za-z\\s]+) ([0-9]+) ([0-9?]+) ([0-9?]+) ([0-9?]+) (.+)$");
+    static const QRegularExpression fileInfoRegex("^([A-Za-z\\s]+) ([0-9]+) ([0-9?]+) ([0-9?]+) ([0-9?]+) ([0-9?]+) (.+)$");
+    const bool preserveChangeTime = Settings().preserveChangeTime();
     for(const QString &fileInfo: output){
         const QRegularExpressionMatch match = fileInfoRegex.match(fileInfo);
         if(!match.hasMatch()){
@@ -221,9 +245,25 @@ NTSTATUS DOKAN_CALLBACK findFiles(LPCWSTR fileName, PFillFindData fillFindData, 
         const FILETIME lastWriteTime = unixTimeToMicrosftTime(match.captured(4).toLongLong(&lastWriteTimeKnown));
         bool lastAccessTimeKnown;
         const FILETIME lastAccessTime = unixTimeToMicrosftTime(match.captured(5).toLongLong(&lastAccessTimeKnown));
-        const QString subfileName = androidFileNameToWindowsFileName(match.captured(6).split("/").last());
 
-        WIN32_FIND_DATAW findData;
+
+
+    /* NEW ============== */
+        bool changeTimeKnown;
+        const FILETIME changeTime =
+            unixTimeToMicrosftTime(match.captured(6).toLongLong(&changeTimeKnown));
+
+        const FILETIME effectiveChangeTime =
+            preserveChangeTime && changeTimeKnown
+                ? changeTime
+                : (lastWriteTimeKnown ? lastWriteTime : unknownTime);
+   
+    /* NEW END ============== */     
+
+        
+        const QString subfileName = androidFileNameToWindowsFileName(match.captured(7).split("/").last());
+
+        WIN32_FIND_DATAW findData{};    /* NEW ============== */
         findData.dwFileAttributes = getFileAttributes(isDirectory, subfileName);
         
         // !!! was:       findData.ftCreationTime = creationTimeKnown ? creationTime : unknownTime;
@@ -238,6 +278,12 @@ NTSTATUS DOKAN_CALLBACK findFiles(LPCWSTR fileName, PFillFindData fillFindData, 
         findData.ftLastAccessTime = lastAccessTimeKnown ? lastAccessTime : unknownTime;
         findData.nFileSizeHigh = fileSize.HighPart;
         findData.nFileSizeLow = fileSize.LowPart;
+
+  /* NEW ============== */
+        findData.dwReserved0 = effectiveChangeTime.dwLowDateTime;
+        findData.dwReserved1 = effectiveChangeTime.dwHighDateTime;
+   /* NEW END ============== */ 
+        
         wcscpy_s(findData.cFileName, sizeof(findData.cFileName) / sizeof(findData.cFileName[0]), subfileName.toStdWString().c_str());
         findData.cAlternateFileName[0] = L'\0';    //There is no alternate file name, so just set the first byte to a null terminator to indicate an empty string
         fillFindData(&findData, dokanFileInfo);
