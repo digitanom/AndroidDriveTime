@@ -78,6 +78,33 @@ SettingsWindow::SettingsWindow(const AndroidDrive *drive):
     this->_hideDotFiles->setWhatsThis(QObject::tr("If this checkbox is checked, files that begin with a dot will be treated as hidden files, and will only be visible in Windows Explorer if Windows Explorer's \"Show hidden files\" option is activated."));
     globalSettingsLayout->addRow(this->_hideDotFiles);
 
+
+
+
+
+    this->_preserveChangeTime = new QCheckBox(
+    QObject::tr("Use Android ctime as Windows &Change time"),
+    globalSettingsBox
+    );
+    QObject::connect(
+        this->_preserveChangeTime,
+        &QCheckBox::clicked,
+        this->_applyButton,
+        enableApplyButton
+    );
+    this->_preserveChangeTime->setWhatsThis(
+        QObject::tr(
+            "If enabled, Android ctime is reported as Windows Change Time."
+            "<br/><br/>If disabled, Change Time is reported as Last Write Time, "
+            "matching the original AndroidDrive behavior."
+        )
+    );
+    globalSettingsLayout->addRow(this->_preserveChangeTime);
+
+    
+
+
+    
     this->_language = new QComboBox(globalSettingsBox);
     QObject::connect(this->_language, &QComboBox::currentIndexChanged, this->_applyButton, enableApplyButton);
     for(const QString &language: SettingsWindow::_languageNames){
@@ -145,6 +172,13 @@ Settings &operator<<(Settings &settings, const SettingsWindow *settingsWindow){
     }
     settings.setOpenInExplorer(settingsWindow->_openInExplorer->isChecked());
     settings.setHideDotFiles(settingsWindow->_hideDotFiles->isChecked());
+
+    
+    
+    settings.setPreserveChangeTime(settingsWindow->_preserveChangeTime->isChecked());
+
+
+    
     settings.setLanguage(SettingsWindow::_languageAbbreviations[settingsWindow->_language->currentIndex()]);
     settingsWindow->_applyButton->setEnabled(false);
     return settings;
@@ -164,6 +198,11 @@ const Settings &operator>>(const Settings &settings, SettingsWindow *settingsWin
     }
     settingsWindow->_openInExplorer->setChecked(settings.openInExplorer());
     settingsWindow->_hideDotFiles->setChecked(settings.hideDotFiles());
+
+
+    settingsWindow->_preserveChangeTime->setChecked(settings.preserveChangeTime());
+
+    
     settingsWindow->_language->setCurrentIndex(SettingsWindow::_languageAbbreviations.indexOf(settings.language()));
     settingsWindow->_applyButton->setEnabled(false);
     return settings;
