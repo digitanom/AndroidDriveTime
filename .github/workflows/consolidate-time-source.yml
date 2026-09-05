@@ -1,0 +1,371 @@
+name: Consolidate AndroidDriveTime source changes
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  consolidate:
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Apply time settings directly to source
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          function Replace-Exact {
+            param(
+              [string]$Path,
+              [string]$Old,
+              [string]$New
+            )
+
+            $text = Get-Content $Path -Raw
+
+            if (-not $text.Contains($Old)) {
+              throw "Expected source text not found in $Path`n--- expected ---`n$Old"
+            }
+
+            $text = $text.Replace($Old, $New)
+            Set-Content $Path $text -NoNewline
+          }
+
+          # settings.hpp
+          Replace-Exact `
+            "sources/settings.hpp" `
+            @'
+    void setHideDotFiles(bool hideDotFiles);
+
+    /**
+     * Gets the language that the tray icon settings windows should be displayed in.
+'@ `
+            @'
+    void setHideDotFiles(bool hideDotFiles);
+
+    /**
+     * Checks whether Android ctime should be exposed as Windows Change Time.
+     *
+     * @return True to preserve Android ctime, false to report Last Write Time
+     *         as Change Time (original AndroidDrive behaviour).
+     */
+    bool preserveChangeTime() const;
+    /**
+     * Sets whether Android ctime should be exposed as Windows Change Time.
+     *
+     * @param preserveChangeTime - True to preserve Android ctime.
+     */
+    void setPreserveChangeTime(bool preserveChangeTime);
+
+    /**
+     * Gets the language that the tray icon settings windows should be displayed in.
+'@
+
+          # settings.cpp
+          Replace-Exact `
+            "sources/settings.cpp" `
+            @'
+void Settings::setHideDotFiles(bool hideDotFiles){
+    this->_settings.setValue("hideDotFiles", hideDotFiles);
+}
+
+QString Settings::language() const{
+'@ `
+            @'
+void Settings::setHideDotFiles(bool hideDotFiles){
+    this->_settings.setValue("hideDotFiles", hideDotFiles);
+}
+
+bool Settings::preserveChangeTime() const{
+    return this->_settings.value("preserveChangeTime", true).toBool();
+}
+
+void Settings::setPreserveChangeTime(bool preserveChangeTime){
+    this->_settings.setValue("preserveChangeTime", preserveChangeTime);
+}
+
+QString Settings::language() const{
+'@
+
+          # settingswindow.hpp
+          Replace-Exact `
+            "sources/settingswindow.hpp" `
+            @'
+    QCheckBox *_openInExplorer;
+    QCheckBox *_hideDotFiles;
+    QComboBox *_language;
+'@ `
+            @'
+    QCheckBox *_openInExplorer;
+    QCheckBox *_hideDotFiles;
+    QCheckBox *_preserveChangeTime;
+    QComboBox *_language;
+'@
+
+          # settingswindow.cpp - UI
+          Replace-Exact `
+            "sources/settingswindow.cpp" `
+            @'
+    this->_hideDotFiles->setWhatsThis(QObject::tr("If this checkbox is checked, files that begin with a dot will be treated as hidden files, and will only be visible in Windows Explorer if Windows Explorer's \"Show hidden files\" option is activated."));
+    globalSettingsLayout->addRow(this->_hideDotFiles);
+
+    this->_language = new QComboBox(globalSettingsBox);
+'@ `
+            @'
+    this->_hideDotFiles->setWhatsThis(QObject::tr("If this checkbox is checked, files that begin with a dot will be treated as hidden files, and will only be visible in Windows Explorer if Windows Explorer's \"Show hidden files\" option is activated."));
+    globalSettingsLayout->addRow(this->_hideDotFiles);
+
+    this->_preserveChangeTime = new QCheckBox(QObject::tr("Preserve Android &change time (ctime)"), globalSettingsBox);
+    QObject::connect(this->_preserveChangeTime, &QCheckBox::clicked, this->_applyButton, enableApplyButton);
+    this->_preserveChangeTime->setWhatsThis(QObject::tr(
+        "If this checkbox is checked, Android ctime is reported to Windows as Change Time.<br/><br/>"
+        "If it is unchecked, Change Time is reported as Last Write Time, matching the original AndroidDrive behavior.<br/><br/>"
+        "If Android ctime cannot be read, Last Write Time is used automatically."));
+    globalSettingsLayout->addRow(this->_preserveChangeTime);
+
+    this->_language = new QComboBox(globalSettingsBox);
+'@
+
+          # settingswindow.cpp - save
+          Replace-Exact `
+            "sources/settingswindow.cpp" `
+            @'
+    settings.setOpenInExplorer(settingsWindow->_openInExplorer->isChecked());
+    settings.setHideDotFiles(settingsWindow->_hideDotFiles->isChecked());
+    settings.setLanguage(SettingsWindow::_languageAbbreviations[settingsWindow->_language->currentIndex()]);
+'@ `
+            @'
+    settings.setOpenInExplorer(settingsWindow->_openInExplorer->isChecked());
+    settings.setHideDotFiles(settingsWindow->_hideDotFiles->isChecked());
+    settings.setPreserveChangeTime(settingsWindow->_preserveChangeTime->isChecked());
+    settings.setLanguage(SettingsWindow::_languageAbbreviations[settingsWindow->_language->currentIndex()]);
+'@
+
+          # settingswindow.cpp - load
+          Replace-Exact `
+            "sources/settingswindow.cpp" `
+            @'
+    settingsWindow->_openInExplorer->setChecked(settings.openInExplorer());
+    settingsWindow->_hideDotFiles->setChecked(settings.hideDotFiles());
+    settingsWindow->_language->setCurrentIndex(SettingsWindow::_languageAbbreviations.indexOf(settings.language()));
+'@ `
+            @'
+    settingsWindow->_openInExplorer->setChecked(settings.openInExplorer());
+    settingsWindow->_hideDotFiles->setChecked(settings.hideDotFiles());
+    settingsWindow->_preserveChangeTime->setChecked(settings.preserveChangeTime());
+    settingsWindow->_language->setCurrentIndex(SettingsWindow::_languageAbbreviations.indexOf(settings.language()));
+'@
+
+          # dokanoperations.cpp - GetFileInformation stat
+          Replace-Exact `
+            "sources/dokanoperations.cpp" `
+            'stat -c \"%F %s %W %Y %X\" %1' `
+            'stat -c \"%F %s %W %Y %X %Z\" %1'
+
+          Replace-Exact `
+            "sources/dokanoperations.cpp" `
+            'static const QRegularExpression fileInfoRegex("^([A-Za-z\\s]+) ([0-9]+) ([0-9?]+) ([0-9?]+) ([0-9?]+)$");' `
+            'static const QRegularExpression fileInfoRegex("^([A-Za-z\\s]+) ([0-9]+) ([0-9?]+) ([0-9?]+) ([0-9?]+) ([0-9?]+)$");'
+
+          # Current main already contains the earlier CreationTime fallback.
+          Replace-Exact `
+            "sources/dokanoperations.cpp" `
+            @'
+    bool lastAccessTimeKnown;
+    const FILETIME lastAccessTime = unixTimeToMicrosftTime(match.captured(5).toLongLong(&lastAccessTimeKnown));
+
+    handleFileInformation->dwFileAttributes = getFileAttributes(isDirectory, filePath.split("/").last());
+'@ `
+            @'
+    bool lastAccessTimeKnown;
+    const FILETIME lastAccessTime = unixTimeToMicrosftTime(match.captured(5).toLongLong(&lastAccessTimeKnown));
+    bool changeTimeKnown;
+    const FILETIME changeTime = unixTimeToMicrosftTime(match.captured(6).toLongLong(&changeTimeKnown));
+    const bool preserveChangeTime = Settings().preserveChangeTime();
+    const FILETIME effectiveChangeTime =
+        (preserveChangeTime && changeTimeKnown)
+            ? changeTime
+            : (lastWriteTimeKnown ? lastWriteTime : unknownTime);
+
+    *handleFileInformation = BY_HANDLE_FILE_INFORMATION{};
+    handleFileInformation->dwFileAttributes = getFileAttributes(isDirectory, filePath.split("/").last());
+'@
+
+          Replace-Exact `
+            "sources/dokanoperations.cpp" `
+            @'
+    handleFileInformation->nFileSizeHigh = fileSize.HighPart;
+    handleFileInformation->nFileSizeLow = fileSize.LowPart;
+
+    DebugLogger::getInstance().log
+'@ `
+            @'
+    handleFileInformation->nFileSizeHigh = fileSize.HighPart;
+    handleFileInformation->nFileSizeLow = fileSize.LowPart;
+    // Private AndroidDriveTime transport for ChangeTime.
+    // The matching patched dokan2.dll reads this FILETIME from nFileIndexLow/High
+    // and keeps the real Windows FileId at zero.
+    handleFileInformation->nFileIndexLow = effectiveChangeTime.dwLowDateTime;
+    handleFileInformation->nFileIndexHigh = effectiveChangeTime.dwHighDateTime;
+
+    DebugLogger::getInstance().log
+'@
+
+          # findFiles documentation + stat format
+          Replace-Exact `
+            "sources/dokanoperations.cpp" `
+            @'
+     * %X = Unix timestamp in seconds for last access time
+     * %n = File path
+'@ `
+            @'
+     * %X = Unix timestamp in seconds for last access time
+     * %Z = Unix timestamp in seconds for change time (ctime)
+     * %n = File path
+'@
+
+          Replace-Exact `
+            "sources/dokanoperations.cpp" `
+            'stat -c \"%F %s %W %Y %X %n\" %1/* %1/.*' `
+            'stat -c \"%F %s %W %Y %X %Z %n\" %1/* %1/.*'
+
+          Replace-Exact `
+            "sources/dokanoperations.cpp" `
+            'static const QRegularExpression fileInfoRegex("^([A-Za-z\\s]+) ([0-9]+) ([0-9?]+) ([0-9?]+) ([0-9?]+) (.+)$");' `
+            @'
+static const QRegularExpression fileInfoRegex("^([A-Za-z\\s]+) ([0-9]+) ([0-9?]+) ([0-9?]+) ([0-9?]+) ([0-9?]+) (.+)$");
+    const bool preserveChangeTime = Settings().preserveChangeTime();
+'@
+
+          Replace-Exact `
+            "sources/dokanoperations.cpp" `
+            @'
+        bool lastAccessTimeKnown;
+        const FILETIME lastAccessTime = unixTimeToMicrosftTime(match.captured(5).toLongLong(&lastAccessTimeKnown));
+        const QString subfileName = androidFileNameToWindowsFileName(match.captured(6).split("/").last());
+
+        WIN32_FIND_DATAW findData;
+'@ `
+            @'
+        bool lastAccessTimeKnown;
+        const FILETIME lastAccessTime = unixTimeToMicrosftTime(match.captured(5).toLongLong(&lastAccessTimeKnown));
+        bool changeTimeKnown;
+        const FILETIME changeTime = unixTimeToMicrosftTime(match.captured(6).toLongLong(&changeTimeKnown));
+        const FILETIME effectiveChangeTime =
+            (preserveChangeTime && changeTimeKnown)
+                ? changeTime
+                : (lastWriteTimeKnown ? lastWriteTime : unknownTime);
+        const QString subfileName = androidFileNameToWindowsFileName(match.captured(7).split("/").last());
+
+        WIN32_FIND_DATAW findData{};
+'@
+
+          Replace-Exact `
+            "sources/dokanoperations.cpp" `
+            @'
+        findData.nFileSizeHigh = fileSize.HighPart;
+        findData.nFileSizeLow = fileSize.LowPart;
+        wcscpy_s
+'@ `
+            @'
+        findData.nFileSizeHigh = fileSize.HighPart;
+        findData.nFileSizeLow = fileSize.LowPart;
+        // Private AndroidDriveTime transport for ChangeTime.
+        // AndroidDrive doesn't expose reparse points, so these reserved fields
+        // are available to the matching patched dokan2.dll.
+        findData.dwReserved0 = effectiveChangeTime.dwLowDateTime;
+        findData.dwReserved1 = effectiveChangeTime.dwHighDateTime;
+        wcscpy_s
+'@
+
+          Write-Host "Source changes applied successfully."
+
+      - name: Commit source changes
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add `
+            sources/settings.hpp `
+            sources/settings.cpp `
+            sources/settingswindow.hpp `
+            sources/settingswindow.cpp `
+            sources/dokanoperations.cpp
+
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) {
+            throw "No source changes were produced."
+          }
+
+          git commit -m "Add configurable Android ChangeTime support"
+
+      - name: Generate cumulative patch against original fork baseline
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $creationCommit = git log `
+            --all `
+            --format="%H" `
+            --grep="Fallback creation time to modification time" `
+            -1
+
+          if (-not $creationCommit) {
+            throw "Could not find the earlier CreationTime fallback commit."
+          }
+
+          $base = git rev-parse "$creationCommit^"
+          Write-Host "Original baseline commit: $base"
+
+          New-Item -ItemType Directory -Force "patches" | Out-Null
+
+          $patchText = git diff `
+            $base `
+            HEAD `
+            -- `
+            sources/settings.hpp `
+            sources/settings.cpp `
+            sources/settingswindow.hpp `
+            sources/settingswindow.cpp `
+            sources/dokanoperations.cpp | Out-String
+
+          $patchPath = Join-Path $env:GITHUB_WORKSPACE "patches\androiddrive-time-support.patch"
+          [System.IO.File]::WriteAllText(
+            $patchPath,
+            $patchText,
+            [System.Text.UTF8Encoding]::new($false)
+          )
+
+          if (-not (Test-Path "patches/androiddrive-time-support.patch")) {
+            throw "Cumulative patch was not created."
+          }
+
+          Write-Host "Cumulative patch:"
+          Get-Content "patches/androiddrive-time-support.patch"
+
+      - name: Commit cumulative patch
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          git add patches/androiddrive-time-support.patch
+
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Cumulative patch unchanged."
+          }
+          else {
+            git commit -m "Add cumulative AndroidDriveTime patch"
+          }
+
+          git push
