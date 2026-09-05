@@ -141,11 +141,7 @@ jobs:
             "Buffer->ChangeTime.LowPart = FindData->dwReserved0;" 7
 
           $oldDot = "    findData.ftLastWriteTime = systime;"
-          $newDot = @"
-    findData.ftLastWriteTime = systime;
-    findData.dwReserved0 = systime.dwLowDateTime;
-    findData.dwReserved1 = systime.dwHighDateTime;
-"@
+          $newDot = "    findData.ftLastWriteTime = systime;`r`n    findData.dwReserved0 = systime.dwLowDateTime;`r`n    findData.dwReserved1 = systime.dwHighDateTime;"
 
           $d = Replace-Exact $d $oldDot $newDot 1
           Set-Content $directoryPath $d -NoNewline
@@ -210,23 +206,22 @@ jobs:
           Copy-Item $exe "$out\AndroidDriveTime.exe" -Force
           Copy-Item $env:PATCHED_DOKAN_DLL "$out\dokan2.dll" -Force
 
-          @"
-AndroidDriveTime test build
-
-Timestamp mapping:
-- CreationTime = Android birth time when available, otherwise mtime
-- LastWriteTime = Android mtime
-- LastAccessTime = Android atime
-- ChangeTime:
-    setting ON  -> Android ctime
-    setting OFF -> Android mtime
-- Current precision: whole seconds
-
-IMPORTANT:
-AndroidDriveTime.exe and dokan2.dll are a matched pair.
-Keep this dokan2.dll beside AndroidDriveTime.exe.
-Do NOT replace the installed Dokan kernel driver (dokan2.sys).
-"@ | Set-Content "$out\README-AndroidDriveTime.txt"
+          $readme = @(
+            "AndroidDriveTime test build",
+            "",
+            "Timestamp mapping:",
+            "- CreationTime = Android birth time when available, otherwise mtime",
+            "- LastWriteTime = Android mtime",
+            "- LastAccessTime = Android atime",
+            "- ChangeTime: setting ON -> Android ctime; setting OFF -> Android mtime",
+            "- Current precision: whole seconds",
+            "",
+            "IMPORTANT:",
+            "AndroidDriveTime.exe and dokan2.dll are a matched pair.",
+            "Keep this dokan2.dll beside AndroidDriveTime.exe.",
+            "Do NOT replace the installed Dokan kernel driver (dokan2.sys)."
+          )
+          $readme | Set-Content "$out\README-AndroidDriveTime.txt"
 
           Get-ChildItem $out | Select-Object Name, Length
 
