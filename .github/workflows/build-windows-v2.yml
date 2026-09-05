@@ -179,6 +179,8 @@ jobs:
 
           Write-Host "Dokany ChangeTime transport patch applied and validated."
 
+  
+
       - name: Build patched dokan2.dll
         shell: powershell
         run: |
@@ -187,7 +189,27 @@ jobs:
           $out = "$env:RUNNER_TEMP\dokan-out"
           New-Item -ItemType Directory -Force $out | Out-Null
 
-          & msbuild $env:DOKAN_PROJECT `
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+
+          if (-not (Test-Path $vswhere)) {
+            throw "vswhere.exe not found: $vswhere"
+          }
+
+          $msbuild = & $vswhere `
+            -latest `
+            -products * `
+            -requires Microsoft.Component.MSBuild `
+            -find "MSBuild\**\Bin\MSBuild.exe" |
+            Select-Object -First 1
+
+          if (-not $msbuild) {
+            throw "MSBuild.exe not found by vswhere"
+          }
+
+          Write-Host "Using MSBuild:"
+          Write-Host $msbuild
+
+          & $msbuild $env:DOKAN_PROJECT `
             /m `
             /p:Configuration=Release `
             /p:Platform=x64 `
@@ -195,16 +217,27 @@ jobs:
             /p:WindowsTargetPlatformVersion=10.0 `
             "/p:OutDir=$out\"
 
-          if ($LASTEXITCODE -ne 0) { throw "Building patched dokan2.dll failed." }
+          if ($LASTEXITCODE -ne 0) {
+            throw "Building patched dokan2.dll failed."
+          }
 
           $dll = Join-Path $out "dokan2.dll"
+
           if (-not (Test-Path $dll)) {
-            Get-ChildItem $out -Recurse | Select-Object FullName, Length
+            Write-Host "Build output:"
+            Get-ChildItem $out -Recurse |
+              Select-Object FullName, Length
+
             throw "Patched dokan2.dll not found: $dll"
           }
 
-          "PATCHED_DOKAN_DLL=$dll" | Out-File $env:GITHUB_ENV -Append
-          Get-Item $dll | Select-Object FullName, Length
+          "PATCHED_DOKAN_DLL=$dll" |
+            Out-File $env:GITHUB_ENV -Append
+
+          Write-Host "Patched dokan2.dll:"
+          Get-Item $dll |
+            Select-Object FullName, Length
+   
 
       - name: Configure AndroidDriveTime
         shell: powershell
