@@ -1,0 +1,250 @@
+name: Build AndroidDriveTime ChangeTime
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.3'
+          arch: 'win64_msvc2022_64'
+          cache: true
+
+      - name: Prepare vendored Dokan SDK
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $archive = "$env:GITHUB_WORKSPACE\third_party\dokan-sdk-2.3.1.1000-win64.zip"
+          $dst = "C:\Program Files\Dokan\DokanLibrary-2.3.1"
+
+          if (-not (Test-Path $archive)) { throw "Missing vendored Dokan SDK: $archive" }
+
+          New-Item -ItemType Directory -Force $dst | Out-Null
+          Expand-Archive -Path $archive -DestinationPath $dst -Force
+
+          $required = @(
+            "$dst\include\dokan\dokan.h",
+            "$dst\include\dokan\fileinfo.h",
+            "$dst\include\dokan\public.h",
+            "$dst\lib\dokan2.lib",
+            "$dst\dokan2.dll"
+          )
+
+          foreach ($file in $required) {
+            if (-not (Test-Path $file)) { throw "Required Dokan SDK file missing: $file" }
+          }
+
+          Write-Host "Vendored Dokan SDK OK."
+
+      - name: Extract vendored Dokany source
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $archive = "$env:GITHUB_WORKSPACE\third_party\dokany-source-v2.3.1.1000.zip"
+          $dst = "$env:RUNNER_TEMP\dokany-src"
+
+          if (-not (Test-Path $archive)) { throw "Missing vendored Dokany source: $archive" }
+
+          New-Item -ItemType Directory -Force $dst | Out-Null
+          Expand-Archive -Path $archive -DestinationPath $dst -Force
+
+          $project = Get-ChildItem $dst -Recurse -Filter "dokan.vcxproj" |
+            Where-Object { $_.Directory.Name -eq "dokan" } |
+            Select-Object -First 1
+
+          if (-not $project) { throw "dokan.vcxproj not found." }
+
+          $root = $project.Directory.Parent.FullName
+          "DOKAN_PROJECT=$($project.FullName)" | Out-File $env:GITHUB_ENV -Append
+          "DOKAN_ROOT=$root" | Out-File $env:GITHUB_ENV -Append
+
+          Write-Host "Dokany root: $root"
+          Write-Host "Dokan project: $($project.FullName)"
+
+      - name: Patch Dokany ChangeTime transport
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          function Replace-Exact {
+            param(
+              [string]$Text,
+              [string]$Old,
+              [string]$New,
+              [int]$ExpectedCount
+            )
+
+            $count = ([regex]::Matches($Text, [regex]::Escape($Old))).Count
+            if ($count -ne $ExpectedCount) {
+              throw "Expected $ExpectedCount occurrence(s), found $count : $Old"
+            }
+            return $Text.Replace($Old, $New)
+          }
+
+          $fileInfoPath = Join-Path $env:DOKAN_ROOT "dokan\fileinfo.c"
+          $t = Get-Content $fileInfoPath -Raw
+
+          $t = Replace-Exact $t `
+            "BasicInfo->ChangeTime.LowPart = FileInfo->ftLastWriteTime.dwLowDateTime;" `
+            "BasicInfo->ChangeTime.LowPart = FileInfo->nFileIndexLow;" 1
+
+          $t = Replace-Exact $t `
+            "BasicInfo->ChangeTime.HighPart = FileInfo->ftLastWriteTime.dwHighDateTime;" `
+            "BasicInfo->ChangeTime.HighPart = FileInfo->nFileIndexHigh;" 1
+
+          $t = Replace-Exact $t `
+            "NetInfo->ChangeTime.LowPart = FileInfo->ftLastWriteTime.dwLowDateTime;" `
+            "NetInfo->ChangeTime.LowPart = FileInfo->nFileIndexLow;" 1
+
+          $t = Replace-Exact $t `
+            "NetInfo->ChangeTime.HighPart = FileInfo->ftLastWriteTime.dwHighDateTime;" `
+            "NetInfo->ChangeTime.HighPart = FileInfo->nFileIndexHigh;" 1
+
+          $t = Replace-Exact $t `
+            "InternalInfo->IndexNumber.HighPart = FileInfo->nFileIndexHigh;" `
+            "InternalInfo->IndexNumber.HighPart = 0;" 1
+
+          $t = Replace-Exact $t `
+            "InternalInfo->IndexNumber.LowPart = FileInfo->nFileIndexLow;" `
+            "InternalInfo->IndexNumber.LowPart = 0;" 1
+
+          $t = Replace-Exact $t `
+            "((DWORD *)(IdInfo->FileId.Identifier))[0] = FileInfo->nFileIndexLow;" `
+            "((DWORD *)(IdInfo->FileId.Identifier))[0] = 0;" 1
+
+          $t = Replace-Exact $t `
+            "((DWORD *)(IdInfo->FileId.Identifier))[1] = FileInfo->nFileIndexHigh;" `
+            "((DWORD *)(IdInfo->FileId.Identifier))[1] = 0;" 1
+
+          Set-Content $fileInfoPath $t -NoNewline
+
+          $directoryPath = Join-Path $env:DOKAN_ROOT "dokan\directory.c"
+          $d = Get-Content $directoryPath -Raw
+
+          $d = Replace-Exact $d `
+            "Buffer->ChangeTime.HighPart = FindData->ftLastWriteTime.dwHighDateTime;" `
+            "Buffer->ChangeTime.HighPart = FindData->dwReserved1;" 7
+
+          $d = Replace-Exact $d `
+            "Buffer->ChangeTime.LowPart = FindData->ftLastWriteTime.dwLowDateTime;" `
+            "Buffer->ChangeTime.LowPart = FindData->dwReserved0;" 7
+
+          $oldDot = "    findData.ftLastWriteTime = systime;"
+          $newDot = @"
+    findData.ftLastWriteTime = systime;
+    findData.dwReserved0 = systime.dwLowDateTime;
+    findData.dwReserved1 = systime.dwHighDateTime;
+"@
+
+          $d = Replace-Exact $d $oldDot $newDot 1
+          Set-Content $directoryPath $d -NoNewline
+
+          Write-Host "Dokany ChangeTime transport patch applied and validated."
+
+      - name: Build patched dokan2.dll
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $out = "$env:RUNNER_TEMP\dokan-out"
+          New-Item -ItemType Directory -Force $out | Out-Null
+
+          & msbuild $env:DOKAN_PROJECT `
+            /m `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /p:PlatformToolset=v143 `
+            /p:WindowsTargetPlatformVersion=10.0 `
+            "/p:OutDir=$out\"
+
+          if ($LASTEXITCODE -ne 0) { throw "Building patched dokan2.dll failed." }
+
+          $dll = Join-Path $out "dokan2.dll"
+          if (-not (Test-Path $dll)) {
+            Get-ChildItem $out -Recurse | Select-Object FullName, Length
+            throw "Patched dokan2.dll not found: $dll"
+          }
+
+          "PATCHED_DOKAN_DLL=$dll" | Out-File $env:GITHUB_ENV -Append
+          Get-Item $dll | Select-Object FullName, Length
+
+      - name: Configure AndroidDriveTime
+        shell: powershell
+        run: |
+          cmake `
+            -S sources `
+            -B build `
+            -G "Visual Studio 17 2022" `
+            -A x64 `
+            -DCMAKE_PREFIX_PATH="$env:Qt6_DIR"
+
+      - name: Build AndroidDriveTime
+        shell: powershell
+        run: |
+          cmake `
+            --build build `
+            --config Release
+
+      - name: Prepare test output
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $out = "$env:GITHUB_WORKSPACE\build_output"
+          New-Item -ItemType Directory -Force $out | Out-Null
+
+          $exe = "$env:GITHUB_WORKSPACE\build\Release\AndroidDrive.exe"
+          if (-not (Test-Path $exe)) { throw "AndroidDrive.exe not found: $exe" }
+
+          Copy-Item $exe "$out\AndroidDriveTime.exe" -Force
+          Copy-Item $env:PATCHED_DOKAN_DLL "$out\dokan2.dll" -Force
+
+          @"
+AndroidDriveTime test build
+
+Timestamp mapping:
+- CreationTime = Android birth time when available, otherwise mtime
+- LastWriteTime = Android mtime
+- LastAccessTime = Android atime
+- ChangeTime:
+    setting ON  -> Android ctime
+    setting OFF -> Android mtime
+- Current precision: whole seconds
+
+IMPORTANT:
+AndroidDriveTime.exe and dokan2.dll are a matched pair.
+Keep this dokan2.dll beside AndroidDriveTime.exe.
+Do NOT replace the installed Dokan kernel driver (dokan2.sys).
+"@ | Set-Content "$out\README-AndroidDriveTime.txt"
+
+          Get-ChildItem $out | Select-Object Name, Length
+
+      - name: Commit test binaries
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add build_output
+          git diff --cached --quiet
+
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Build output unchanged."
+            exit 0
+          }
+
+          git commit -m "Build AndroidDriveTime ChangeTime test"
+          git push
