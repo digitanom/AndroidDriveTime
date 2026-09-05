@@ -42,6 +42,21 @@ void Settings::setHideDotFiles(bool hideDotFiles){
     this->_settings.setValue("hideDotFiles", hideDotFiles);
 }
 
+
+
+
+bool Settings::preserveChangeTime() const{
+    return this->_settings.value("preserveChangeTime", true).toBool();
+}
+
+void Settings::setPreserveChangeTime(bool preserveChangeTime){
+    this->_settings.setValue("preserveChangeTime", preserveChangeTime);
+}
+
+
+
+
+
 QString Settings::language() const{
     return this->_settings.value("language", "auto").toString();
 }
