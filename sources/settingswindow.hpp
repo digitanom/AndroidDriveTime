@@ -61,6 +61,15 @@ private:
 
     QCheckBox *_openInExplorer;
     QCheckBox *_hideDotFiles;
+
+
+
+
+    QCheckBox *_preserveChangeTime;
+
+
+
+
     QComboBox *_language;
 
     QPushButton *const _applyButton = new QPushButton(QObject::tr("&Apply"), this);
