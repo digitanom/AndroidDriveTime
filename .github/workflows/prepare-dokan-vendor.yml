@@ -1,4 +1,4 @@
-name: Prepare Dokan Vendor
+name: Prepare Dokan Vendor v0.8
 
 on:
   workflow_dispatch:
